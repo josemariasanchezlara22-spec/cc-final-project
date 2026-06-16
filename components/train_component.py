@@ -1,5 +1,4 @@
-from kfp.dsl import component, Output, Artifact
-
+from kfp.dsl import component
 
 @component(
     base_image="python:3.11",
@@ -9,41 +8,29 @@ from kfp.dsl import component, Output, Artifact
         "xgboost",
         "joblib",
         "gcsfs",
-        "scikit-learn"
+        "scikit-learn",
+        "google-cloud-storage"
     ]
 )
 def train_component(
     processed_data_path: str,
-    model_artifact: Output[Artifact]
+    model_output_dir: str
 ):
     """
-    Entrena el modelo utilizando los datasets
-    generados por preprocess_component.
+    Entrena el modelo utilizando los datasets generados 
+    y guarda el archivo 'model.joblib' directamente en la ruta fija de GCS.
     """
-
     import joblib
     import pandas as pd
-
     from xgboost import XGBClassifier
+    from google.cloud import storage
 
-    print("processed_data_path recibido:")
-    print(processed_data_path)
-
-    print(
-        f"{processed_data_path}/X_train.parquet"
-    )
-
-    X_train = pd.read_parquet(
-        f"{processed_data_path}/X_train.parquet"
-    )
-
-    y_train = pd.read_parquet(
-        f"{processed_data_path}/y_train.parquet"
-    )["target"]
+    print(f"Leyendo datos desde: {processed_data_path}")
+    X_train = pd.read_parquet(f"{processed_data_path}/X_train.parquet")
+    y_train = pd.read_parquet(f"{processed_data_path}/y_train.parquet")["target"]
 
     neg = (y_train == 0).sum()
     pos = (y_train == 1).sum()
-
     scale_pos_weight = neg / pos
 
     model = XGBClassifier(
@@ -63,16 +50,20 @@ def train_component(
         n_jobs=-1
     )
 
-    model.fit(
-        X_train,
-        y_train
-    )
+    model.fit(X_train, y_train)
 
-    joblib.dump(
-        model,
-        model_artifact.path
-    )
+    # Guardar localmente primero
+    local_path = "/tmp/model.joblib"
+    joblib.dump(model, local_path)
 
-    print(
-        f"Modelo guardado en {model_artifact.path}"
-    )
+    # Subir directamente a la ruta fija de GCS donde Vertex lo buscará
+    uri_clean = model_output_dir.replace("gs://", "")
+    bucket_name = uri_clean.split("/")[0]
+    blob_prefix = "/".join(uri_clean.split("/")[1:])
+    
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(f"{blob_prefix}/model.joblib")
+    blob.upload_from_filename(local_path)
+
+    print(f"Modelo subido exitosamente a GCS: {model_output_dir}/model.joblib")

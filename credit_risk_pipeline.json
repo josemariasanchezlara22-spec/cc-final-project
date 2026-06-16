@@ -3,12 +3,12 @@
     "comp-condition-1": {
       "dag": {
         "tasks": {
-          "register-model-component": {
+          "register-and-deploy-model-component": {
             "cachingOptions": {
               "enableCache": true
             },
             "componentRef": {
-              "name": "comp-register-model-component"
+              "name": "comp-register-and-deploy-model-component"
             },
             "inputs": {
               "parameters": {
@@ -35,7 +35,7 @@
               }
             },
             "taskInfo": {
-              "name": "register-model-component"
+              "name": "register-and-deploy-model-component"
             }
           }
         }
@@ -51,15 +51,10 @@
     "comp-evaluate-component": {
       "executorLabel": "exec-evaluate-component",
       "inputDefinitions": {
-        "artifacts": {
-          "model_artifact": {
-            "artifactType": {
-              "schemaTitle": "system.Artifact",
-              "schemaVersion": "0.0.1"
-            }
-          }
-        },
         "parameters": {
+          "model_output_dir": {
+            "parameterType": "STRING"
+          },
           "processed_data_path": {
             "parameterType": "STRING"
           }
@@ -89,8 +84,8 @@
         }
       }
     },
-    "comp-register-model-component": {
-      "executorLabel": "exec-register-model-component",
+    "comp-register-and-deploy-model-component": {
+      "executorLabel": "exec-register-and-deploy-model-component",
       "inputDefinitions": {
         "parameters": {
           "bucket_name": {
@@ -112,18 +107,11 @@
       "executorLabel": "exec-train-component",
       "inputDefinitions": {
         "parameters": {
+          "model_output_dir": {
+            "parameterType": "STRING"
+          },
           "processed_data_path": {
             "parameterType": "STRING"
-          }
-        }
-      },
-      "outputDefinitions": {
-        "artifacts": {
-          "model_artifact": {
-            "artifactType": {
-              "schemaTitle": "system.Artifact",
-              "schemaVersion": "0.0.1"
-            }
           }
         }
       }
@@ -142,11 +130,11 @@
           "command": [
             "sh",
             "-c",
-            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'pandas' 'pyarrow' 'xgboost' 'joblib' 'scikit-learn' 'gcsfs'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'pandas' 'pyarrow' 'xgboost' 'joblib' 'scikit-learn' 'gcsfs' 'google-cloud-storage'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
             "sh",
             "-ec",
             "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
-            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef evaluate_component(\n    model_artifact: Input[Artifact],\n    processed_data_path: str\n) -> NamedTuple(\n    \"Outputs\",\n    [\n        (\"roc_auc\", float),\n        (\"accuracy\", float)\n    ]\n):\n    \"\"\"\n    Eval\u00faa el modelo utilizando el dataset\n    generado por preprocess_component.\n    \"\"\"\n\n    import json\n\n    import joblib\n    import pandas as pd\n\n    from collections import namedtuple\n\n    from sklearn.metrics import (\n        accuracy_score,\n        roc_auc_score\n    )\n\n    model = joblib.load(\n        model_artifact.path\n    )\n\n    X_test = pd.read_parquet(\n        f\"{processed_data_path}/X_test.parquet\"\n    )\n\n    y_test = pd.read_parquet(\n        f\"{processed_data_path}/y_test.parquet\"\n    )[\"target\"]\n\n    y_pred = model.predict(\n        X_test\n    )\n\n    y_prob = model.predict_proba(\n        X_test\n    )[:, 1]\n\n    accuracy = float(\n        accuracy_score(\n            y_test,\n            y_pred\n        )\n    )\n\n    roc_auc = float(\n        roc_auc_score(\n            y_test,\n            y_prob\n        )\n    )\n\n    metrics = {\n        \"accuracy\": accuracy,\n        \"roc_auc\": roc_auc\n    }\n\n    with open(\n        \"/tmp/metrics.json\",\n        \"w\"\n    ) as file:\n\n        json.dump(\n            metrics,\n            file,\n            indent=4\n        )\n\n    print(metrics)\n\n    outputs = namedtuple(\n        \"Outputs\",\n        [\n            \"roc_auc\",\n            \"accuracy\"\n        ]\n    )\n\n    return outputs(\n        roc_auc,\n        accuracy\n    )\n\n"
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef evaluate_component(\n    model_output_dir: str,\n    processed_data_path: str\n) -> NamedTuple(\n    \"Outputs\",\n    [\n        (\"roc_auc\", float),\n        (\"accuracy\", float)\n    ]\n):\n    import json\n    import joblib\n    import pandas as pd\n    from collections import namedtuple\n    from sklearn.metrics import accuracy_score, roc_auc_score\n    from google.cloud import storage\n\n    # Descargar modelo desde la ruta de producci\u00f3n en GCS\n    uri_clean = model_output_dir.replace(\"gs://\", \"\")\n    bucket_name = uri_clean.split(\"/\")[0]\n    blob_prefix = \"/\".join(uri_clean.split(\"/\")[1:])\n\n    client = storage.Client()\n    bucket = client.bucket(bucket_name)\n    blob = bucket.blob(f\"{blob_prefix}/model.joblib\")\n\n    local_path = \"/tmp/model.joblib\"\n    blob.download_to_filename(local_path)\n    model = joblib.load(local_path)\n\n    X_test = pd.read_parquet(f\"{processed_data_path}/X_test.parquet\")\n    y_test = pd.read_parquet(f\"{processed_data_path}/y_test.parquet\")[\"target\"]\n\n    y_pred = model.predict(X_test)\n    y_prob = model.predict_proba(X_test)[:, 1]\n\n    accuracy = float(accuracy_score(y_test, y_pred))\n    roc_auc = float(roc_auc_score(y_test, y_prob))\n\n    metrics = {\"accuracy\": accuracy, \"roc_auc\": roc_auc}\n    print(metrics)\n\n    outputs = namedtuple(\"Outputs\", [\"roc_auc\", \"accuracy\"])\n    return outputs(roc_auc, accuracy)\n\n"
           ],
           "image": "python:3.11"
         }
@@ -171,13 +159,13 @@
           "image": "python:3.11"
         }
       },
-      "exec-register-model-component": {
+      "exec-register-and-deploy-model-component": {
         "container": {
           "args": [
             "--executor_input",
             "{{$}}",
             "--function_to_execute",
-            "register_model_component"
+            "register_and_deploy_model_component"
           ],
           "command": [
             "sh",
@@ -186,7 +174,7 @@
             "sh",
             "-ec",
             "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
-            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef register_model_component(\n    project_id: str,\n    region: str,\n    bucket_name: str,\n    model_version: str\n):\n    \"\"\"\n    Registra el modelo en Vertex AI Model Registry\n    usando un contenedor personalizado de inferencia.\n    \"\"\"\n\n    from google.cloud import aiplatform\n\n    aiplatform.init(\n        project=project_id,\n        location=region,\n        staging_bucket=f\"gs://{bucket_name}\"\n    )\n\n    serving_container_image_uri = (\n        \"us-central1-docker.pkg.dev/\"\n        \"cloud-computing-jm-2026v2/\"\n        \"credit-risk-serving/\"\n        \"predictor:latest\"\n    )\n\n    model = aiplatform.Model.upload(\n        display_name=f\"xgboost_credit_risk_{model_version}\",\n        artifact_uri=(\n            f\"gs://{bucket_name}/vertex_models/{model_version}\"\n        ),\n        serving_container_image_uri=(\n            serving_container_image_uri\n        )\n    )\n\n    print(\n        f\"Modelo registrado: {model.resource_name}\"\n    )\n\n"
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef register_and_deploy_model_component(\n    project_id: str,\n    region: str,\n    bucket_name: str,\n    model_version: str\n):\n    \"\"\"\n    Registra el modelo en Vertex Model Registry asignando las rutas nativas\n    del contenedor y lo despliega autom\u00e1ticamente a un Endpoint productivo.\n    \"\"\"\n    from google.cloud import aiplatform\n\n    aiplatform.init(\n        project=project_id,\n        location=region,\n        staging_bucket=f\"gs://{bucket_name}\"\n    )\n\n    serving_container_image_uri = (\n        f\"us-central1-docker.pkg.dev/{project_id}/credit-risk-serving/predictor:latest\"\n    )\n\n    # 1. Registrar modelo con la configuraci\u00f3n del contenedor adaptada\n    print(\"Registrando modelo en Vertex AI Model Registry...\")\n    model = aiplatform.Model.upload(\n        display_name=f\"xgboost_credit_risk_{model_version}\",\n        artifact_uri=f\"gs://{bucket_name}/vertex_models/{model_version}\",\n        serving_container_image_uri=serving_container_image_uri,\n        serving_container_predict_route=\"/predict\",\n        serving_container_health_route=\"/health\",\n        serving_container_ports=[8080]\n    )\n    print(f\"Modelo registrado exitosamente: {model.resource_name}\")\n\n    # 2. Crear el Endpoint de predicciones\n    print(\"Creando Endpoint en Vertex AI...\")\n    endpoint = aiplatform.Endpoint.create(\n        display_name=f\"endpoint_xgboost_credit_risk_{model_version}\"\n    )\n    print(f\"Endpoint creado: {endpoint.resource_name}\")\n\n    # 3. Desplegar el modelo al Endpoint\n    print(\"Desplegando modelo al Endpoint (esto puede tardar unos minutos)...\")\n    model.deploy(\n        endpoint=endpoint,\n        deployed_model_display_name=f\"deployed_xgb_{model_version}\",\n        machine_type=\"n1-standard-2\",  # Instancia econ\u00f3mica ideal para procesamiento est\u00e1ndar\n        min_replica_count=1,\n        max_replica_count=1\n    )\n    print(\"\u00a1Proceso completado! Tu Endpoint est\u00e1 listo para recibir tr\u00e1fico.\")\n\n"
           ],
           "image": "python:3.11"
         }
@@ -202,11 +190,11 @@
           "command": [
             "sh",
             "-c",
-            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'pandas' 'pyarrow' 'xgboost' 'joblib' 'gcsfs' 'scikit-learn'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'pandas' 'pyarrow' 'xgboost' 'joblib' 'gcsfs' 'scikit-learn' 'google-cloud-storage'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
             "sh",
             "-ec",
             "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
-            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef train_component(\n    processed_data_path: str,\n    model_artifact: Output[Artifact]\n):\n    \"\"\"\n    Entrena el modelo utilizando los datasets\n    generados por preprocess_component.\n    \"\"\"\n\n    import joblib\n    import pandas as pd\n\n    from xgboost import XGBClassifier\n\n    print(\"processed_data_path recibido:\")\n    print(processed_data_path)\n\n    print(\n        f\"{processed_data_path}/X_train.parquet\"\n    )\n\n    X_train = pd.read_parquet(\n        f\"{processed_data_path}/X_train.parquet\"\n    )\n\n    y_train = pd.read_parquet(\n        f\"{processed_data_path}/y_train.parquet\"\n    )[\"target\"]\n\n    neg = (y_train == 0).sum()\n    pos = (y_train == 1).sum()\n\n    scale_pos_weight = neg / pos\n\n    model = XGBClassifier(\n        n_estimators=348,\n        max_depth=6,\n        learning_rate=0.059284370976004655,\n        subsample=0.8702765514333507,\n        colsample_bytree=0.952941904232232,\n        min_child_weight=4,\n        gamma=2.501536380722278,\n        reg_alpha=0.90853661986719,\n        reg_lambda=4.823822796963244,\n        scale_pos_weight=scale_pos_weight,\n        objective=\"binary:logistic\",\n        eval_metric=\"logloss\",\n        random_state=42,\n        n_jobs=-1\n    )\n\n    model.fit(\n        X_train,\n        y_train\n    )\n\n    joblib.dump(\n        model,\n        model_artifact.path\n    )\n\n    print(\n        f\"Modelo guardado en {model_artifact.path}\"\n    )\n\n"
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef train_component(\n    processed_data_path: str,\n    model_output_dir: str\n):\n    \"\"\"\n    Entrena el modelo utilizando los datasets generados \n    y guarda el archivo 'model.joblib' directamente en la ruta fija de GCS.\n    \"\"\"\n    import joblib\n    import pandas as pd\n    from xgboost import XGBClassifier\n    from google.cloud import storage\n\n    print(f\"Leyendo datos desde: {processed_data_path}\")\n    X_train = pd.read_parquet(f\"{processed_data_path}/X_train.parquet\")\n    y_train = pd.read_parquet(f\"{processed_data_path}/y_train.parquet\")[\"target\"]\n\n    neg = (y_train == 0).sum()\n    pos = (y_train == 1).sum()\n    scale_pos_weight = neg / pos\n\n    model = XGBClassifier(\n        n_estimators=348,\n        max_depth=6,\n        learning_rate=0.059284370976004655,\n        subsample=0.8702765514333507,\n        colsample_bytree=0.952941904232232,\n        min_child_weight=4,\n        gamma=2.501536380722278,\n        reg_alpha=0.90853661986719,\n        reg_lambda=4.823822796963244,\n        scale_pos_weight=scale_pos_weight,\n        objective=\"binary:logistic\",\n        eval_metric=\"logloss\",\n        random_state=42,\n        n_jobs=-1\n    )\n\n    model.fit(X_train, y_train)\n\n    # Guardar localmente primero\n    local_path = \"/tmp/model.joblib\"\n    joblib.dump(model, local_path)\n\n    # Subir directamente a la ruta fija de GCS donde Vertex lo buscar\u00e1\n    uri_clean = model_output_dir.replace(\"gs://\", \"\")\n    bucket_name = uri_clean.split(\"/\")[0]\n    blob_prefix = \"/\".join(uri_clean.split(\"/\")[1:])\n\n    client = storage.Client()\n    bucket = client.bucket(bucket_name)\n    blob = bucket.blob(f\"{blob_prefix}/model.joblib\")\n    blob.upload_from_filename(local_path)\n\n    print(f\"Modelo subido exitosamente a GCS: {model_output_dir}/model.joblib\")\n\n"
           ],
           "image": "python:3.11"
         }
@@ -254,15 +242,12 @@
             "train-component"
           ],
           "inputs": {
-            "artifacts": {
-              "model_artifact": {
-                "taskOutputArtifact": {
-                  "outputArtifactKey": "model_artifact",
-                  "producerTask": "train-component"
-                }
-              }
-            },
             "parameters": {
+              "model_output_dir": {
+                "runtimeValue": {
+                  "constant": "gs://am-up-01-credit-riskv2/vertex_models/xgb_optuna_v2"
+                }
+              },
               "processed_data_path": {
                 "runtimeValue": {
                   "constant": "gs://am-up-01-credit-riskv2/data/processed"
@@ -306,8 +291,16 @@
           "componentRef": {
             "name": "comp-train-component"
           },
+          "dependentTasks": [
+            "preprocess-component"
+          ],
           "inputs": {
             "parameters": {
+              "model_output_dir": {
+                "runtimeValue": {
+                  "constant": "gs://am-up-01-credit-riskv2/vertex_models/xgb_optuna_v2"
+                }
+              },
               "processed_data_path": {
                 "runtimeValue": {
                   "constant": "gs://am-up-01-credit-riskv2/data/processed"
