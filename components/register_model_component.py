@@ -40,20 +40,20 @@ def register_and_deploy_model_component(
     )
     print(f"Modelo registrado exitosamente: {model.resource_name}")
 
-    # 2. Crear el Endpoint de predicciones
-    print("Creando Endpoint en Vertex AI...")
-    endpoint = aiplatform.Endpoint.create(
-        display_name=f"endpoint_xgboost_credit_risk_{model_version}"
-    )
-    print(f"Endpoint creado: {endpoint.resource_name}")
+    # # 2. Crear el Endpoint de predicciones
+    # print("Creando Endpoint en Vertex AI...")
+    # endpoint = aiplatform.Endpoint.create(
+    #     display_name=f"endpoint_xgboost_credit_risk_{model_version}"
+    # )
+    # print(f"Endpoint creado: {endpoint.resource_name}")
 
-    # 3. Desplegar el modelo al Endpoint
-    print("Desplegando modelo al Endpoint (esto puede tardar unos minutos)...")
-    model.deploy(
-        endpoint=endpoint,
-        deployed_model_display_name=f"deployed_xgb_{model_version}",
-        machine_type="n1-standard-2",  # Instancia económica ideal para procesamiento estándar
-        min_replica_count=1,
-        max_replica_count=1
-    )
-    print("¡Proceso completado! Tu Endpoint está listo para recibir tráfico.")
+    # # 3. Desplegar el modelo al Endpoint
+    # print("Desplegando modelo al Endpoint (esto puede tardar unos minutos)...")
+    # model.deploy(
+    #     endpoint=endpoint,
+    #     deployed_model_display_name=f"deployed_xgb_{model_version}",
+    #     machine_type="n1-standard-2",  # Instancia económica ideal para procesamiento estándar
+    #     min_replica_count=1,
+    #     max_replica_count=1
+    # )
+    # print("¡Proceso completado! Tu Endpoint está listo para recibir tráfico.")

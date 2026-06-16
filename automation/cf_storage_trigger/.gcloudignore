@@ -1,0 +1,20 @@
+# Ignorar el entorno virtual local de Python
+venv/
+env/
+.env/
+
+# Ignorar archivos temporales y cachés de Python
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.cache/
+
+# Ignorar archivos ocultos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Ignorar archivos de configuración de Git
+.git/
+.gitignore

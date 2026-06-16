@@ -39,9 +39,8 @@ def credit_risk_pipeline():
     ).after(train_task)
 
     # 4. Umbral de validación de calidad del modelo (ROC AUC >= 70%)
-    with dsl.If(
-        evaluate_task.outputs["roc_auc"] >= 0.70
-    ):
+    with dsl.If(evaluate_task.outputs["roc_auc"] >= 0.70):
+        # Solo invócalo, no lo iguales a "deploy_task = ..." ya que no regresa nada
         register_and_deploy_model_component(
             project_id="cloud-computing-jm-2026v2",
             region="us-central1",
