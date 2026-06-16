@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+xgboost
+joblib
+pandas
+numpy
+scikit-learn
+google-cloud-storage

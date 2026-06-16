@@ -8,7 +8,8 @@ from kfp.dsl import component, Output, Artifact
         "pyarrow",
         "xgboost",
         "joblib",
-        "gcsfs"
+        "gcsfs",
+        "scikit-learn"
     ]
 )
 def train_component(
@@ -31,7 +32,7 @@ def train_component(
     print(
         f"{processed_data_path}/X_train.parquet"
     )
-    
+
     X_train = pd.read_parquet(
         f"{processed_data_path}/X_train.parquet"
     )

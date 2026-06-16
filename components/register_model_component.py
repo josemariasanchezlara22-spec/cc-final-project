@@ -14,7 +14,8 @@ def register_model_component(
     model_version: str
 ):
     """
-    Registra el modelo en Vertex AI Model Registry.
+    Registra el modelo en Vertex AI Model Registry
+    usando un contenedor personalizado de inferencia.
     """
 
     from google.cloud import aiplatform
@@ -25,13 +26,20 @@ def register_model_component(
         staging_bucket=f"gs://{bucket_name}"
     )
 
+    serving_container_image_uri = (
+        "us-central1-docker.pkg.dev/"
+        "cloud-computing-jm-2026v2/"
+        "credit-risk-serving/"
+        "predictor:latest"
+    )
+
     model = aiplatform.Model.upload(
         display_name=f"xgboost_credit_risk_{model_version}",
         artifact_uri=(
             f"gs://{bucket_name}/vertex_models/{model_version}"
         ),
         serving_container_image_uri=(
-            "us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-5:latest"
+            serving_container_image_uri
         )
     )
 
