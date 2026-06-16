@@ -1,6 +1,6 @@
-PROJECT_ID = "am-up-01"
+PROJECT_ID = "cloud-computing-jm-2026v2"
 REGION = "us-central1"
-BUCKET_NAME = "am-up-01-credit-risk"
+BUCKET_NAME = "am-up-01-credit-riskv2"
 
 RAW_DATA_PATH = "data/raw/loan.csv"
 PROCESSED_DATA_PATH = "data/processed/"

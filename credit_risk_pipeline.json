@@ -1,0 +1,327 @@
+{
+  "components": {
+    "comp-condition-1": {
+      "dag": {
+        "tasks": {
+          "register-model-component": {
+            "cachingOptions": {
+              "enableCache": true
+            },
+            "componentRef": {
+              "name": "comp-register-model-component"
+            },
+            "inputs": {
+              "parameters": {
+                "bucket_name": {
+                  "runtimeValue": {
+                    "constant": "am-up-01-credit-riskv2"
+                  }
+                },
+                "model_version": {
+                  "runtimeValue": {
+                    "constant": "xgb_optuna_v2"
+                  }
+                },
+                "project_id": {
+                  "runtimeValue": {
+                    "constant": "cloud-computing-jm-2026v2"
+                  }
+                },
+                "region": {
+                  "runtimeValue": {
+                    "constant": "us-central1"
+                  }
+                }
+              }
+            },
+            "taskInfo": {
+              "name": "register-model-component"
+            }
+          }
+        }
+      },
+      "inputDefinitions": {
+        "parameters": {
+          "pipelinechannel--evaluate-component-roc_auc": {
+            "parameterType": "NUMBER_DOUBLE"
+          }
+        }
+      }
+    },
+    "comp-evaluate-component": {
+      "executorLabel": "exec-evaluate-component",
+      "inputDefinitions": {
+        "artifacts": {
+          "model_artifact": {
+            "artifactType": {
+              "schemaTitle": "system.Artifact",
+              "schemaVersion": "0.0.1"
+            }
+          }
+        },
+        "parameters": {
+          "processed_data_path": {
+            "parameterType": "STRING"
+          }
+        }
+      },
+      "outputDefinitions": {
+        "parameters": {
+          "accuracy": {
+            "parameterType": "NUMBER_DOUBLE"
+          },
+          "roc_auc": {
+            "parameterType": "NUMBER_DOUBLE"
+          }
+        }
+      }
+    },
+    "comp-preprocess-component": {
+      "executorLabel": "exec-preprocess-component",
+      "inputDefinitions": {
+        "parameters": {
+          "input_csv_path": {
+            "parameterType": "STRING"
+          },
+          "output_path": {
+            "parameterType": "STRING"
+          }
+        }
+      }
+    },
+    "comp-register-model-component": {
+      "executorLabel": "exec-register-model-component",
+      "inputDefinitions": {
+        "parameters": {
+          "bucket_name": {
+            "parameterType": "STRING"
+          },
+          "model_version": {
+            "parameterType": "STRING"
+          },
+          "project_id": {
+            "parameterType": "STRING"
+          },
+          "region": {
+            "parameterType": "STRING"
+          }
+        }
+      }
+    },
+    "comp-train-component": {
+      "executorLabel": "exec-train-component",
+      "inputDefinitions": {
+        "parameters": {
+          "processed_data_path": {
+            "parameterType": "STRING"
+          }
+        }
+      },
+      "outputDefinitions": {
+        "artifacts": {
+          "model_artifact": {
+            "artifactType": {
+              "schemaTitle": "system.Artifact",
+              "schemaVersion": "0.0.1"
+            }
+          }
+        }
+      }
+    }
+  },
+  "deploymentSpec": {
+    "executors": {
+      "exec-evaluate-component": {
+        "container": {
+          "args": [
+            "--executor_input",
+            "{{$}}",
+            "--function_to_execute",
+            "evaluate_component"
+          ],
+          "command": [
+            "sh",
+            "-c",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'pandas' 'pyarrow' 'xgboost' 'joblib' 'scikit-learn' 'gcsfs'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "sh",
+            "-ec",
+            "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef evaluate_component(\n    model_artifact: Input[Artifact],\n    processed_data_path: str\n) -> NamedTuple(\n    \"Outputs\",\n    [\n        (\"roc_auc\", float),\n        (\"accuracy\", float)\n    ]\n):\n    \"\"\"\n    Eval\u00faa el modelo utilizando el dataset\n    generado por preprocess_component.\n    \"\"\"\n\n    import json\n\n    import joblib\n    import pandas as pd\n\n    from collections import namedtuple\n\n    from sklearn.metrics import (\n        accuracy_score,\n        roc_auc_score\n    )\n\n    model = joblib.load(\n        model_artifact.path\n    )\n\n    X_test = pd.read_parquet(\n        f\"{processed_data_path}/X_test.parquet\"\n    )\n\n    y_test = pd.read_parquet(\n        f\"{processed_data_path}/y_test.parquet\"\n    )[\"target\"]\n\n    y_pred = model.predict(\n        X_test\n    )\n\n    y_prob = model.predict_proba(\n        X_test\n    )[:, 1]\n\n    accuracy = float(\n        accuracy_score(\n            y_test,\n            y_pred\n        )\n    )\n\n    roc_auc = float(\n        roc_auc_score(\n            y_test,\n            y_prob\n        )\n    )\n\n    metrics = {\n        \"accuracy\": accuracy,\n        \"roc_auc\": roc_auc\n    }\n\n    with open(\n        \"/tmp/metrics.json\",\n        \"w\"\n    ) as file:\n\n        json.dump(\n            metrics,\n            file,\n            indent=4\n        )\n\n    print(metrics)\n\n    outputs = namedtuple(\n        \"Outputs\",\n        [\n            \"roc_auc\",\n            \"accuracy\"\n        ]\n    )\n\n    return outputs(\n        roc_auc,\n        accuracy\n    )\n\n"
+          ],
+          "image": "python:3.11"
+        }
+      },
+      "exec-preprocess-component": {
+        "container": {
+          "args": [
+            "--executor_input",
+            "{{$}}",
+            "--function_to_execute",
+            "preprocess_component"
+          ],
+          "command": [
+            "sh",
+            "-c",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'pandas' 'numpy' 'pyarrow' 'scikit-learn' 'gcsfs'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "sh",
+            "-ec",
+            "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef preprocess_component(\n    input_csv_path: str,\n    output_path: str\n):\n    \"\"\"\n    Lee el dataset desde Cloud Storage,\n    realiza preprocesamiento y genera\n    X_train, X_test, y_train, y_test.\n    \"\"\"\n\n    import pandas as pd\n\n    from sklearn.model_selection import train_test_split\n\n    RANDOM_STATE = 42\n\n    candidate_features = [\n        \"loan_amnt\",\n        \"term\",\n        \"int_rate\",\n        \"installment\",\n        \"grade\",\n        \"sub_grade\",\n        \"emp_length\",\n        \"home_ownership\",\n        \"annual_inc\",\n        \"verification_status\",\n        \"application_type\",\n        \"purpose\",\n        \"dti\",\n        \"delinq_2yrs\",\n        \"inq_last_6mths\",\n        \"open_acc\",\n        \"pub_rec\",\n        \"revol_bal\",\n        \"revol_util\",\n        \"total_acc\",\n        \"mort_acc\",\n        \"pub_rec_bankruptcies\",\n        \"tax_liens\"\n    ]\n\n    # -----------------------------\n    # Carga dataset\n    # -----------------------------\n\n    df = pd.read_csv(\n        input_csv_path,\n        low_memory=False\n    )\n\n    # -----------------------------\n    # Target\n    # -----------------------------\n\n    target_status = [\n        \"Fully Paid\",\n        \"Charged Off\"\n    ]\n\n    df = df[\n        df[\"loan_status\"].isin(\n            target_status\n        )\n    ].copy()\n\n    df[\"target\"] = (\n        df[\"loan_status\"] == \"Charged Off\"\n    ).astype(int)\n\n    # -----------------------------\n    # Selecci\u00f3n variables\n    # -----------------------------\n\n    df = df[\n        candidate_features +\n        [\"target\"]\n    ].copy()\n\n    # -----------------------------\n    # Imputaci\u00f3n\n    # -----------------------------\n\n    numeric_impute_cols = [\n        \"pub_rec_bankruptcies\",\n        \"dti\",\n        \"tax_liens\",\n        \"inq_last_6mths\"\n    ]\n\n    for col in numeric_impute_cols:\n\n        df[col] = df[col].fillna(\n            df[col].median()\n        )\n\n    # -----------------------------\n    # One Hot Encoding\n    # -----------------------------\n\n    categorical_features = (\n        df\n        .select_dtypes(include=[\"object\"])\n        .columns\n        .tolist()\n    )\n\n    df = pd.get_dummies(\n        df,\n        columns=categorical_features,\n        drop_first=True,\n        dtype=int\n    )\n\n    df.columns = (\n        df.columns\n        .str.replace(\"[\", \"_\", regex=False)\n        .str.replace(\"]\", \"_\", regex=False)\n        .str.replace(\"<\", \"_lt_\", regex=False)\n        .str.replace(\">\", \"_gt_\", regex=False)\n    )\n\n    # -----------------------------\n    # Split\n    # -----------------------------\n\n    X = df.drop(\n        columns=[\"target\"]\n    )\n\n    y = df[\"target\"]\n\n    X_train, X_test, y_train, y_test = train_test_split(\n        X,\n        y,\n        test_size=0.20,\n        random_state=RANDOM_STATE,\n        stratify=y\n    )\n\n    # -----------------------------\n    # Guardar en GCS\n    # -----------------------------\n\n    X_train.to_parquet(\n        f\"{output_path}/X_train.parquet\",\n        index=False\n    )\n\n    X_test.to_parquet(\n        f\"{output_path}/X_test.parquet\",\n        index=False\n    )\n\n    y_train.to_frame(\n        name=\"target\"\n    ).to_parquet(\n        f\"{output_path}/y_train.parquet\",\n        index=False\n    )\n\n    y_test.to_frame(\n        name=\"target\"\n    ).to_parquet(\n        f\"{output_path}/y_test.parquet\",\n        index=False\n    )\n\n    print(\"Preprocesamiento completado\")\n\n"
+          ],
+          "image": "python:3.11"
+        }
+      },
+      "exec-register-model-component": {
+        "container": {
+          "args": [
+            "--executor_input",
+            "{{$}}",
+            "--function_to_execute",
+            "register_model_component"
+          ],
+          "command": [
+            "sh",
+            "-c",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "sh",
+            "-ec",
+            "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef register_model_component(\n    project_id: str,\n    region: str,\n    bucket_name: str,\n    model_version: str\n):\n    \"\"\"\n    Registra el modelo en Vertex AI Model Registry.\n    \"\"\"\n\n    from google.cloud import aiplatform\n\n    aiplatform.init(\n        project=project_id,\n        location=region,\n        staging_bucket=f\"gs://{bucket_name}\"\n    )\n\n    model = aiplatform.Model.upload(\n        display_name=f\"xgboost_credit_risk_{model_version}\",\n        artifact_uri=(\n            f\"gs://{bucket_name}/vertex_models/{model_version}\"\n        ),\n        serving_container_image_uri=(\n            \"us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-5:latest\"\n        )\n    )\n\n    print(\n        f\"Modelo registrado: {model.resource_name}\"\n    )\n\n"
+          ],
+          "image": "python:3.11"
+        }
+      },
+      "exec-train-component": {
+        "container": {
+          "args": [
+            "--executor_input",
+            "{{$}}",
+            "--function_to_execute",
+            "train_component"
+          ],
+          "command": [
+            "sh",
+            "-c",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'pandas' 'pyarrow' 'xgboost' 'joblib' 'gcsfs'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "sh",
+            "-ec",
+            "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef train_component(\n    processed_data_path: str,\n    model_artifact: Output[Artifact]\n):\n    \"\"\"\n    Entrena el modelo utilizando los datasets\n    generados por preprocess_component.\n    \"\"\"\n\n    import joblib\n    import pandas as pd\n\n    from xgboost import XGBClassifier\n\n    print(\"processed_data_path recibido:\")\n    print(processed_data_path)\n\n    print(\n        f\"{processed_data_path}/X_train.parquet\"\n    )\n\n    X_train = pd.read_parquet(\n        f\"{processed_data_path}/X_train.parquet\"\n    )\n\n    y_train = pd.read_parquet(\n        f\"{processed_data_path}/y_train.parquet\"\n    )[\"target\"]\n\n    neg = (y_train == 0).sum()\n    pos = (y_train == 1).sum()\n\n    scale_pos_weight = neg / pos\n\n    model = XGBClassifier(\n        n_estimators=348,\n        max_depth=6,\n        learning_rate=0.059284370976004655,\n        subsample=0.8702765514333507,\n        colsample_bytree=0.952941904232232,\n        min_child_weight=4,\n        gamma=2.501536380722278,\n        reg_alpha=0.90853661986719,\n        reg_lambda=4.823822796963244,\n        scale_pos_weight=scale_pos_weight,\n        objective=\"binary:logistic\",\n        eval_metric=\"logloss\",\n        random_state=42,\n        n_jobs=-1\n    )\n\n    model.fit(\n        X_train,\n        y_train\n    )\n\n    joblib.dump(\n        model,\n        model_artifact.path\n    )\n\n    print(\n        f\"Modelo guardado en {model_artifact.path}\"\n    )\n\n"
+          ],
+          "image": "python:3.11"
+        }
+      }
+    }
+  },
+  "pipelineInfo": {
+    "name": "credit-risk-pipeline"
+  },
+  "root": {
+    "dag": {
+      "tasks": {
+        "condition-1": {
+          "componentRef": {
+            "name": "comp-condition-1"
+          },
+          "dependentTasks": [
+            "evaluate-component"
+          ],
+          "inputs": {
+            "parameters": {
+              "pipelinechannel--evaluate-component-roc_auc": {
+                "taskOutputParameter": {
+                  "outputParameterKey": "roc_auc",
+                  "producerTask": "evaluate-component"
+                }
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "condition-1"
+          },
+          "triggerPolicy": {
+            "condition": "inputs.parameter_values['pipelinechannel--evaluate-component-roc_auc'] >= 0.7"
+          }
+        },
+        "evaluate-component": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-evaluate-component"
+          },
+          "dependentTasks": [
+            "train-component"
+          ],
+          "inputs": {
+            "artifacts": {
+              "model_artifact": {
+                "taskOutputArtifact": {
+                  "outputArtifactKey": "model_artifact",
+                  "producerTask": "train-component"
+                }
+              }
+            },
+            "parameters": {
+              "processed_data_path": {
+                "runtimeValue": {
+                  "constant": "gs://am-up-01-credit-riskv2/data/processed"
+                }
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "evaluate-component"
+          }
+        },
+        "preprocess-component": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-preprocess-component"
+          },
+          "inputs": {
+            "parameters": {
+              "input_csv_path": {
+                "runtimeValue": {
+                  "constant": "gs://am-up-01-credit-riskv2/data/raw/loan.csv"
+                }
+              },
+              "output_path": {
+                "runtimeValue": {
+                  "constant": "gs://am-up-01-credit-riskv2/data/processed"
+                }
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "preprocess-component"
+          }
+        },
+        "train-component": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-train-component"
+          },
+          "inputs": {
+            "parameters": {
+              "processed_data_path": {
+                "runtimeValue": {
+                  "constant": "gs://am-up-01-credit-riskv2/data/processed"
+                }
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "train-component"
+          }
+        }
+      }
+    }
+  },
+  "schemaVersion": "2.1.0",
+  "sdkVersion": "kfp-2.16.1"
+}

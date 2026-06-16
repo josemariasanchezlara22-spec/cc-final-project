@@ -8,3 +8,4 @@ google-cloud-storage
 google-cloud-aiplatform
 kfp
 pyarrow
+google-cloud-aiplatform
